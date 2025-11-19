@@ -32,8 +32,9 @@ const appointmentSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['scheduled', 'confirmed', 'checked-in', 'in-progress', 'completed', 'cancelled', 'no-show'],
-    default: 'scheduled',
+    // --- THIS IS THE CHANGE ---
+    enum: ['scheduled', 'confirmed', 'attended', 'not-attended', 'cancelled'],
+    default: 'confirmed', // <-- Automatically confirmed
     index: true
   },
   type: {
@@ -155,7 +156,7 @@ appointmentSchema.methods.updateStatus = function(newStatus) {
   
   // Set timing fields based on status
   switch (newStatus) {
-    case 'checked-in':
+    case 'attended': // <-- CHANGED
       this.checkedInAt = new Date();
       break;
     case 'in-progress':
@@ -178,4 +179,3 @@ appointmentSchema.methods.calculateDuration = function() {
 
 export const Appointment = mongoose.model('Appointment', appointmentSchema);
 export default Appointment;
-

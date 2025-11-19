@@ -17,7 +17,7 @@ import puppeteer from 'puppeteer';
 import jwt from 'jsonwebtoken';
 import { fileURLToPath } from 'url';
 import mongoose from 'mongoose';
-import { queue } from '../email/emailQueue.js';
+//import { queue } from '../email/emailQueue.js';
 
 // Get __dirname equivalent for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -327,7 +327,7 @@ app.post('/api/public/appointments', async (req, res) => {
       patientId: patient._id,
       doctorId: doctor._id,
       scheduledAt: new Date(`${date}T${time}:00`),
-      status: 'scheduled',
+      status: 'confirmed',
       reason: reason || 'General consultation',
       createdBy: patient._id // Use patient ID as creator for public bookings
     });
@@ -471,11 +471,16 @@ app.get('/api/appointments/:id', async (req, res) => {
   }
 });
 
+
+
 // Update appointment status
+// REPLACE the app.patch route (lines 431-509) with this:
+
+// Update appointment (status, reschedule, etc.)
 app.patch('/api/appointments/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, notes, consultationFee, paymentStatus } = req.body;
+    const { status, notes, consultationFee, paymentStatus, date, time } = req.body;
     
     // Find appointment
     const appointment = await Appointment.findById(id);
@@ -485,25 +490,33 @@ app.patch('/api/appointments/:id', async (req, res) => {
         code: 'APPOINTMENT_NOT_FOUND'
       });
     }
-    
-    // Update appointment
-    appointment.status = status;
+
+    // Handle rescheduling
+    if (date && time) {
+      appointment.scheduledAt = new Date(`${date}T${time}:00`);
+      console.log(`[Clinic] Rescheduled appointment ${id} to: ${appointment.scheduledAt}`);
+    }
+   
+    // Handle other optional fields
     if (notes) appointment.notes = notes;
     if (consultationFee !== undefined) appointment.consultationFee = consultationFee;
     if (paymentStatus) appointment.paymentStatus = paymentStatus;
     
-    // Set timing fields based on status
-    switch (status) {
-      case 'checked-in':
-        appointment.checkedInAt = new Date();
-        break;
-      case 'in-progress':
-        appointment.startedAt = new Date();
-        break;
-      case 'completed':
-        appointment.completedAt = new Date();
-        break;
-    }
+    // Handle status updates
+    if (status) {
+      appointment.status = status;
+      switch (status) {
+        case 'checked-in':
+          appointment.checkedInAt = new Date();
+          break;
+        case 'in-progress':
+          appointment.startedAt = new Date();
+          break;
+        case 'completed':
+          appointment.completedAt = new Date();
+          break;
+      }
+    } 
     
     await appointment.save();
     
@@ -511,11 +524,25 @@ app.patch('/api/appointments/:id', async (req, res) => {
     await appointment.populate('patientId', 'firstName lastName email phone');
     await appointment.populate('doctorId', 'firstName lastName email');
     
+    // --- THIS IS THE FIX ---
+    // Safely handle null patientId or doctorId
+    const patientName = appointment.patientId 
+      ? `${appointment.patientId.firstName || 'Unknown'} ${appointment.patientId.lastName || 'Patient'}`
+      : 'Unknown Patient';
+    
+    const doctorName = appointment.doctorId 
+      ? `Dr. ${appointment.doctorId.firstName || 'Unknown'} ${appointment.doctorId.lastName || 'Doctor'}`
+      : 'Unknown Doctor';
+    
+    const phone = appointment.patientId?.phone || 'N/A';
+    const email = appointment.patientId?.email || 'N/A';
+    // --- END FIX ---
+    
     const formattedAppointment = {
       id: appointment._id,
       appointmentId: appointment.appointmentId,
-      patientName: `${appointment.patientId.firstName} ${appointment.patientId.lastName}`,
-      doctorName: `Dr. ${appointment.doctorId.firstName} ${appointment.doctorId.lastName}`,
+      patientName, // Use the safe variable
+      doctorName,  // Use the safe variable
       date: appointment.scheduledAt.toISOString().split('T')[0],
       time: appointment.scheduledAt.toTimeString().split(' ')[0].substring(0, 5),
       status: appointment.status,
@@ -523,8 +550,8 @@ app.patch('/api/appointments/:id', async (req, res) => {
       notes: appointment.notes,
       consultationFee: appointment.consultationFee,
       paymentStatus: appointment.paymentStatus,
-      phone: appointment.patientId.phone,
-      email: appointment.patientId.email,
+      phone, // Use the safe variable
+      email, // Use the safe variable
       checkedInAt: appointment.checkedInAt,
       startedAt: appointment.startedAt,
       completedAt: appointment.completedAt,
@@ -540,7 +567,9 @@ app.patch('/api/appointments/:id', async (req, res) => {
     console.error('Update appointment error:', error);
     res.status(500).json({
       error: 'Failed to update appointment',
-      code: 'UPDATE_ERROR'
+      code: 'UPDATE_ERROR',
+      // Add details to the error message for easier debugging in the future
+      details: error.message 
     });
   }
 });
@@ -622,7 +651,7 @@ app.patch('/api/appointments/:id/confirm', authenticateToken, async (req, res) =
     const doctorName = appointment.doctorId 
       ? `Dr. ${appointment.doctorId.firstName || 'Unknown'} ${appointment.doctorId.lastName || 'Doctor'}`
       : 'Unknown Doctor';
-    
+   /* 
     // Add Job to email Queue
     await queue.add("emailQueue", {
       template: "appointment_confirmed",
@@ -635,7 +664,7 @@ app.patch('/api/appointments/:id/confirm', authenticateToken, async (req, res) =
         appointmentReason: appointment.reason || 'No reason provided',
       },
     });
-    
+    */
    
     res.json({
       success: true,
@@ -663,7 +692,45 @@ app.patch('/api/appointments/:id/confirm', authenticateToken, async (req, res) =
     });
   }
 });
+// Delete appointment (Admin/Receptionist)
+app.delete('/api/appointments/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
 
+    // Check for admin/receptionist role
+    if (!['admin', 'receptionist'].includes(req.user.role)) {
+      return res.status(403).json({
+        error: 'Insufficient permissions. Only admin and receptionist can delete appointments.',
+        code: 'PERMISSION_DENIED'
+      });
+    }
+
+    // Find and delete the appointment
+    const appointment = await Appointment.findByIdAndDelete(id);
+
+    if (!appointment) {
+      return res.status(404).json({
+        error: 'Appointment not found',
+        code: 'APPOINTMENT_NOT_FOUND'
+      });
+    }
+
+    console.log(`[Clinic] Appointment DELETED: ${id} by ${req.user.email}`);
+    
+    res.json({ 
+      success: true, 
+      message: 'Appointment deleted successfully',
+      data: appointment // Send back the deleted item
+    });
+
+  } catch (error) {
+    console.error('Delete appointment error:', error);
+    res.status(500).json({
+      error: 'Failed to delete appointment',
+      code: 'DELETE_ERROR'
+    });
+  }
+});
 // Mark appointment as attended/not attended (Receptionist only)
 app.patch('/api/appointments/:id/attendance', authenticateToken, async (req, res) => {
   try {

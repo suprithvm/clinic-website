@@ -1,17 +1,17 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { 
   Calendar, 
   Clock, 
   Search, 
   Plus, 
-  Filter, 
-  MoreVertical,
   CheckCircle,
   AlertCircle,
   XCircle,
   User,
   FileText,
-  Loader2
+  Loader2,
+  Trash2
 } from 'lucide-react'
 import { appointmentsApi, doctorsApi, publicBookingApi, type Appointment, type Doctor } from '../../services/api'
 import { useToast, ToastContainer } from '../../components/ui/Toast'
@@ -47,6 +47,24 @@ export function AdminDashboard() {
     loadDoctors()
   }, [])
 
+  const handleDeleteAppointment = async (appointment: Appointment) => {
+    if (window.confirm('Are you sure you want to PERMANENTLY DELETE this appointment? This action cannot be undone.')) {
+      try {
+        const response = await appointmentsApi.deleteAppointment(appointment.id);
+        
+        if (response.success) {
+          setAppointments(prev => prev.filter(apt => apt.id !== appointment.id));
+          success('Appointment Deleted', `${appointment.patientName}'s appointment has been permanently deleted.`);
+        } else {
+          error('Failed to delete appointment', response.message || 'Please try again');
+        }
+      } catch (err) {
+        error('Failed to delete appointment', 'Please check your connection');
+        console.error('Error deleting appointment:', err);
+      }
+    }
+  }
+
   const loadAppointments = async () => {
     try {
       setIsLoading(true)
@@ -57,7 +75,6 @@ export function AdminDashboard() {
         console.log('Appointments loaded successfully:', response.data.length)
       } else {
         console.warn('Appointments response structure:', response)
-        // If response is empty object (304 case), don't show error
         if (response && Object.keys(response).length === 0) {
           console.log('Empty response (likely 304) - not showing error')
           return
@@ -280,6 +297,16 @@ export function AdminDashboard() {
     return matchesSearch && matchesStatus
   })
 
+  // Group appointments by doctor
+  const appointmentsByDoctor = filteredAppointments.reduce((acc, appointment) => {
+    const doctorName = appointment.doctorName || 'General Doctor';
+    if (!acc[doctorName]) {
+      acc[doctorName] = [];
+    }
+    acc[doctorName].push(appointment);
+    return acc;
+  }, {} as Record<string, Appointment[]>);
+
   const stats = {
     total: appointments.length,
     scheduled: appointments.filter(a => a.status === 'scheduled').length,
@@ -309,21 +336,7 @@ export function AdminDashboard() {
           <h1 className="text-2xl font-bold text-gray-900">Appointment Management</h1>
           <p className="text-gray-600">Manage patient appointments and schedules</p>
         </div>
-        <div className="flex gap-3">
-          <button className="btn-secondary inline-flex items-center">
-            <Filter className="w-4 h-4 mr-2" />
-            Filter
-          </button>
-          <button 
-            onClick={handleCreateBooking}
-            className="btn-primary inline-flex items-center"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Create Booking
-          </button>
-        </div>
       </div>
-
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -406,7 +419,6 @@ export function AdminDashboard() {
         </div>
       </div>
 
-
       {/* Quick Actions */}
       <div className="card p-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h2>
@@ -418,13 +430,12 @@ export function AdminDashboard() {
             <Plus className="w-4 h-4 mr-2" />
             New Appointment
           </button>
-          <button 
-            onClick={() => window.location.href = '/admin/patients'}
-            className="btn-secondary inline-flex items-center justify-center"
-          >
-            <User className="w-4 h-4 mr-2" />
-            View Patients
-          </button>
+          <Link 
+          to="/admin/patients"
+          className="btn-secondary inline-flex items-center justify-center">
+          <User className="w-4 h-4 mr-2" />
+           View Patients
+          </Link>
           <button 
             onClick={() => window.location.href = '/admin/analytics'}
             className="btn-secondary inline-flex items-center justify-center"
@@ -466,7 +477,7 @@ export function AdminDashboard() {
           </div>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-8">
           {filteredAppointments.length === 0 ? (
             <div className="text-center py-8">
               <Calendar className="w-12 h-12 text-gray-400 mx-auto mb-4" />
@@ -487,87 +498,107 @@ export function AdminDashboard() {
               )}
             </div>
           ) : (
-            filteredAppointments.map((appointment) => (
-              <div key={appointment.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      <h3 className="text-lg font-semibold text-gray-900">{appointment.patientName}</h3>
-                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(appointment.status)}`}>
-                        {getStatusIcon(appointment.status)}
-                        {getStatusText(appointment.status)}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
-                      <div className="flex items-center gap-2">
-                        <User className="w-4 h-4" />
-                        <span>{appointment.doctorName}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4" />
-                        <span>{appointment.date} at {appointment.time}</span>
-                      </div>
-                    </div>
-                    <div className="mt-2 text-sm text-gray-600">
-                      <strong>Reason:</strong> {appointment.reason}
-                    </div>
+            Object.entries(appointmentsByDoctor).sort().map(([doctorName, doctorAppointments]) => (
+              <div key={doctorName} className="bg-gray-50 rounded-xl p-4 border border-gray-200">
+                <div className="flex items-center gap-2 mb-4 pb-2 border-b border-gray-200">
+                  <div className="p-2 bg-white rounded-full shadow-sm">
+                    <User className="w-4 h-4 text-blue-600" />
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {/* Confirm button - for scheduled appointments */}
-                    {appointment.status === 'scheduled' && (
-                      <button 
-                        onClick={() => handleConfirm(appointment)}
-                        className="btn-primary text-sm"
-                      >
-                        <CheckCircle className="w-4 h-4 mr-1" />
-                        Confirm
-                      </button>
-                    )}
-                    
-                    {/* Attendance buttons - for confirmed appointments */}
-                    {appointment.status === 'confirmed' && (
-                      <>
-                        <button 
-                          onClick={() => handleMarkAttendance(appointment, true)}
-                          className="btn-secondary text-sm text-green-600 hover:text-green-700"
-                        >
-                          <CheckCircle className="w-4 h-4 mr-1" />
-                          Attended
-                        </button>
-                        <button 
-                          onClick={() => handleMarkAttendance(appointment, false)}
-                          className="btn-secondary text-sm text-orange-600 hover:text-orange-700"
-                        >
-                          <XCircle className="w-4 h-4 mr-1" />
-                          Not Attended
-                        </button>
-                      </>
-                    )}
-                    
-                    {/* Reschedule button - for scheduled and confirmed appointments */}
-                    {(appointment.status === 'scheduled' || appointment.status === 'confirmed' || appointment.status === 'waiting') && (
-                      <button 
-                        onClick={() => handleReschedule(appointment)}
-                        className="btn-secondary text-sm"
-                      >
-                        Reschedule
-                      </button>
-                    )}
-                    
-                    {/* Cancel button - for scheduled and confirmed appointments */}
-                    {(appointment.status === 'scheduled' || appointment.status === 'confirmed' || appointment.status === 'waiting') && (
-                      <button 
-                        onClick={() => handleCancel(appointment)}
-                        className="btn-secondary text-sm text-red-600 hover:text-red-700"
-                      >
-                        Cancel
-                      </button>
-                    )}
-                    
-                    <button className="p-2 text-gray-400 hover:text-gray-600">
-                      <MoreVertical className="w-4 h-4" />
-                    </button>
-                  </div>
+                  <h3 className="text-lg font-bold text-gray-900">{doctorName}</h3>
+                  <span className="ml-auto text-xs font-medium text-gray-500 bg-white px-2 py-1 rounded-full border border-gray-200 shadow-sm">
+                    {doctorAppointments.length} appointment{doctorAppointments.length !== 1 ? 's' : ''}
+                  </span>
+                </div>
+                <div className="space-y-4">
+                  {doctorAppointments.map((appointment) => (
+                    <div key={appointment.id} className="bg-white border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
+                      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <h3 className="text-lg font-semibold text-gray-900">{appointment.patientName}</h3>
+                            <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(appointment.status)}`}>
+                              {getStatusIcon(appointment.status)}
+                              {getStatusText(appointment.status)}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
+                            <div className="flex items-center gap-2">
+                              <User className="w-4 h-4" />
+                              <span>{appointment.doctorName}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Clock className="w-4 h-4" />
+                              <span>{appointment.date} at {appointment.time}</span>
+                            </div>
+                          </div>
+                          <div className="mt-2 text-sm text-gray-600">
+                            <strong>Reason:</strong> {appointment.reason}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {/* Confirm button - for scheduled appointments */}
+                          {appointment.status === 'scheduled' && (
+                            <button 
+                              onClick={() => handleConfirm(appointment)}
+                              className="btn-primary text-sm"
+                            >
+                              <CheckCircle className="w-4 h-4 mr-1" />
+                              Confirm
+                            </button>
+                          )}
+                          
+                          {/* Attendance buttons - for confirmed appointments */}
+                          {appointment.status === 'confirmed' && (
+                            <>
+                              <button 
+                                onClick={() => handleMarkAttendance(appointment, true)}
+                                className="btn-secondary text-sm text-green-600 hover:text-green-700"
+                              >
+                                <CheckCircle className="w-4 h-4 mr-1" />
+                                Attended
+                              </button>
+                              <button 
+                                onClick={() => handleMarkAttendance(appointment, false)}
+                                className="btn-secondary text-sm text-orange-600 hover:text-orange-700"
+                              >
+                                <XCircle className="w-4 h-4 mr-1" />
+                                Not Attended
+                              </button>
+                            </>
+                          )}
+                          
+                          {/* Reschedule button - for scheduled and confirmed appointments */}
+                          {(appointment.status === 'scheduled' || appointment.status === 'confirmed' || appointment.status === 'waiting') && (
+                            <button 
+                              onClick={() => handleReschedule(appointment)}
+                              className="btn-secondary text-sm"
+                            >
+                              Reschedule
+                            </button>
+                          )}
+                          
+                          {/* Cancel button - for scheduled and confirmed appointments */}
+                          {(appointment.status === 'scheduled' || appointment.status === 'confirmed' || appointment.status === 'waiting') && (
+                            <button 
+                              onClick={() => handleCancel(appointment)}
+                              className="btn-secondary text-sm text-red-600 hover:text-red-700"
+                            >
+                              Cancel
+                            </button>
+                          )}
+                          
+                          <button 
+                            onClick={() => handleDeleteAppointment(appointment)}
+                            className="btn-secondary text-sm text-red-600 hover:text-red-700"
+                            title="Delete Appointment"
+                          >
+                            <Trash2 className="w-4 h-4 mr-1" />
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             ))

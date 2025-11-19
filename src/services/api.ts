@@ -38,8 +38,8 @@ export interface Appointment {
   doctorName: string;
   date: string;
   time: string;
-  status: 'scheduled' | 'confirmed' | 'attended' | 'not-attended' | 'checked-in' | 'completed' | 'cancelled' | 'in-progress'| 'waiting';
   reason: string;
+  status: 'scheduled' | 'confirmed' | 'attended' | 'not-attended' | 'cancelled';
   phone: string;
   email: string;
   prescriptionId?: string;
@@ -80,7 +80,15 @@ export interface Analytics {
     revenueByMonth: Array<{ month: string; revenue: number }>;
   };
 }
-
+export type ApiResponse<T> = {
+  success: boolean
+  message?: string
+  data: T
+  error?: string
+  code?: string
+  token?: string
+  user?: User
+}
 // API Error class
 // API Error class
 export class ApiError extends Error {
@@ -100,6 +108,7 @@ export class ApiError extends Error {
     this.code = code;
   }
 }
+
 
 // HTTP Client
 class HttpClient {
@@ -238,6 +247,10 @@ export const appointmentsApi = {
 
   async markAttendance(id: string, attended: boolean): Promise<{ success: boolean; message: string; data: Appointment }> {
     return httpClient.patch(`/appointments/${id}/attendance`, { attended });
+  },
+  async deleteAppointment(id: string): Promise<ApiResponse<any>> {
+    // Use 'httpClient.delete' instead of 'api.delete'
+    return await httpClient.delete(`/appointments/${id}`);
   },
 };
 
